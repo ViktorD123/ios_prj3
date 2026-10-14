@@ -1,53 +1,56 @@
-name: Build Unsigned IPA for 3uTools
+name: Build Unsigned IPA for 3uTools and Sideloadly
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch: # Позволяет запускать сборку вручную через сайт GitHub
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-latest
-
+  build-ios:
+    runs-on: macos-14
+    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        lfs: true # Обязательно скачиваем тяжелые файлы .a через LFS
+      - name: Проверка кода из репозитория
+        uses: actions/checkout@v4
+        with:
+          lfs: true # ОБЯЗАТЕЛЬНО: выкачиваем тяжелые файлы .a из LFS
 
-    - name: Install Xcode
-      run: |
-        # Используем предустановленный Xcode
-        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+      - name: Сборка Unity Xcode проекта
+        run: |
+          xcodebuild archive \
+            -project Unity-iPhone.xcodeproj \
+            -scheme Unity-iPhone \
+            -configuration Release \
+            -archivePath build/ios/YourApp.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
-    - name: Clean and Build Xcode Project
-      run: |
-        # Собираем архив (.xcarchive) без подписи
-        xcodebuild archive \
-          -project Unity-iPhone.xcodeproj \
-          -scheme Unity-iPhone \
-          -configuration Release \
-          -archivePath $GITHUB_WORKSPACE/build/Unity-iPhone.xcarchive \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGNING_IDENTITY="" \
-          PROVISIONING_PROFILE_SPECIFIER=""
+      - name: Упаковка в IPA
+        run: |
+          mkdir -p build/ios/ipa/Payload
+          
+          # Автоматически находим скомпилированное приложение внутри архива
+          APP_PATH=$(find build/ios/YourApp.xcarchive -name "*.app" -type d | head -n 1)
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "КРИТИЧЕСКАЯ ОШИБКА: Файл приложения (.app) не найден в созданном архиве!"
+            exit 1
+          fi
+          
+          echo "Успешно найдено приложение по пути: $APP_PATH"
+          
+          # Копируем найденное приложение в папку Payload
+          cp -R "$APP_PATH" build/ios/ipa/Payload/
+          
+          # Запаковываем в IPA архив
+          cd build/ios/ipa
+          zip -r unsigned_app.ipa Payload
 
-    - name: Create Unsigned IPA Package
-      run: |
-        # Создаем структуру папок для 3uTools
-        mkdir -p $GITHUB_WORKSPACE/build/Payload
-        
-        # Копируем скомпилированное приложение в Payload
-        cp -R $GITHUB_WORKSPACE/build/Unity-iPhone.xcarchive/Products/Applications/Unity-iPhone.app $GITHUB_WORKSPACE/build/Payload/
-        
-        # Запаковываем папку Payload в zip-архив и меняем расширение на .ipa
-        cd $GITHUB_WORKSPACE/build
-        zip -r unsigned_app.ipa Payload
-
-    - name: Upload IPA to GitHub Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: unsigned-ipa-build
-        path: build/unsigned_app.ipa
-        retention-days: 7 # Ссылка на скачивание будет доступна неделю
+      - name: Сохранение готового IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Unity-Unsigned-IPA
+          path: build/ios/ipa/unsigned_app.ipa
+          retention-days: 7
